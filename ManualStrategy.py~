@@ -1,0 +1,156 @@
+
+import pandas as pd
+import numpy as np
+import datetime as dt
+import os
+from util import get_data  ,plot_data
+from analysis import *
+import pdb
+import matplotlib.pyplot as plt
+from indicators import indicators
+from analysis import *
+from marketsimcode import *
+
+
+class ManualStrategy(object):
+
+    def __init__(self):
+        pass
+
+    def testPolicy(self,symbol , sd = dt.datetime(2010,1,1), ed=dt.datetime(2011,12,31) , sv = 1000000):
+
+        (normalized_values,bbp,moving_avarage,rsi_val,rsi_spy,momentum,sma_cross) = indicators(sd=sd,ed=ed,syms=symbol,allocs=[1],sv=sv,gen_plot=False)
+
+
+        orders = bbp.copy()*0
+        #print(moving_avarage.shape,bbp.shape,rsi_val.shape,rsi_spy.shape)
+        #pdb.set_trace()
+        
+        orders[(moving_avarage < 0.95) & (bbp<0) & (rsi_val<30) & (rsi_spy.SPY.tolist() > 30)] = 1000
+        orders[(moving_avarage > 1.05) & (bbp>1) & (rsi_val>70) & (rsi_spy.SPY.tolist() < 70)] = -1000
+        orders[(sma_cross!= 0)] = 0
+        
+        orders.ffill(inplace=True)
+        orders.fillna(0,inplace=True)
+        norm_val = normalized_values.copy()
+
+        norm_val['2'] = normalized_values.diff().fillna(0).diff().fillna(0)
+        norm_val.ix[norm_val['2']>0,'3'] = 1
+        norm_val.ix[norm_val['2']<0,'3'] = -1
+        norm_val['4']= norm_val['3']*1000
+        norm_val['5'] = norm_val['4'].diff().fillna(0)
+        norm_val.ix[0,'5'] =norm_val.ix[1,'4']
+        norm_val.ix[-1,'5'] = -1*norm_val['5'].sum()
+        inicial = 0
+        nueva = pd.DataFrame(columns=['1','Dates'])
+        
+        for key,row in norm_val.iterrows():
+            if(abs(row['5'])==2000):
+                nueva.loc[inicial,'1']=row['5']/2
+                nueva.loc[inicial,'Dates']=key
+                nueva.loc[inicial+1,'1']=row['5']/2
+                nueva.loc[inicial+1,'Dates']=key
+                inicial = inicial+1
+            else:
+                nueva.loc[inicial,'1']=row['5']
+                nueva.loc[inicial,'Dates']=key
+                    
+            inicial  = inicial+1
+        pdb.set_trace()
+        nueva.set_index('Dates',inplace=True)
+        
+        
+        
+        orders[1:]   = orders.diff()
+        orders.ix[0] = 0
+        orders.columns = ['Shares']
+        orders['Date']=orders.index
+        orders['Order'] = 0
+        #pdb.set_trace()
+        orders.loc[orders['Shares']==-1000,'Order'] = 'SELL'
+        orders.loc[orders['Shares']==1000,'Order'] = 'BUY'
+        orders.loc[orders['Shares']==-1000,'Shares'] = 1000
+        orders.loc[orders['Shares']==1000,'Shares'] = 1000
+        orders['Symbol'] = symbol[0]
+        orders.index = range(len(orders))
+        
+        market = compute_portvals(orders ,start_val=100000,commission=9.95,impact=0.005)
+        pdb.set_trace()
+        assess_portfolio(portfolio=market, sd = sd , ed = ed ,syms=symbol,gen_plot=True,allocs=[1],sv=1000000)
+    
+        return orders
+        
+class TheoreticallyOptimalStrategy(object):
+
+    def __init__(self):
+        pass
+
+    def testPolicy(self,symbol , sd = dt.datetime(2010,1,1), ed=dt.datetime(2011,12,31) , sv = 1000000):
+
+        (normalized_values,bbp,moving_avarage,rsi_val,rsi_spy,momentum,sma_cross) = indicators(sd=sd,ed=ed,syms=symbol,allocs=[1/(len(symbol))]*len(symbol),sv=sv,gen_plot=False)
+
+        norm_val2 = pd.DataFrame()
+        for i in normalized_values.columns.tolist():
+            
+            norm_val = pd.DataFrame(data=normalized_values[i].copy() , index=normalized_values.index)
+            norm_val['2'] = normalized_values[i].diff().fillna(0).diff().fillna(0).shift(-1)
+            norm_val.ix[norm_val['2']>0,'3'] = 1
+            norm_val.ix[norm_val['2']<0,'3'] = -1
+            norm_val['4']= norm_val['3']*1000
+            norm_val['5'] = norm_val['4'].diff().fillna(0)
+            norm_val.ix[0,'5'] =norm_val.ix[1,'4']
+            norm_val.ix[-1,'5'] = -1*norm_val['5'].sum()
+            inicial = 1
+            nueva = pd.DataFrame(columns=[i,'Dates'])
+                        
+            for key,row in norm_val.iterrows():
+                if(abs(row['5'])==2000):
+                    nueva.loc[inicial-1,i]=row['5']/2
+                    nueva.loc[inicial-1,'Dates']=key
+                    nueva.loc[inicial,i]=0
+                    nueva.loc[inicial,'Dates']=key
+                    nueva.loc[inicial+1,i]=row['5']/2
+                    nueva.loc[inicial+1,'Dates']=key
+                    inicial = inicial+2
+                else:
+                    nueva.loc[inicial-1,i]=row['5']
+                    nueva.loc[inicial-1,'Dates']=key
+                    
+                inicial  = inicial+1
+            nueva.set_index('Dates',inplace=True)
+            nueva.rename_axis(None)
+            norm_val2 =pd.concat([norm_val2,nueva])
+                
+        pdb.set_trace()
+        orders   = pd.DataFrame(data=norm_val2[symbol],index=norm_val2.index,columns=symbol)
+        orders.columns  = ['Shares']
+        orders['Date']  = orders.index
+        orders['Order'] = 0
+        orders.loc[orders['Shares']==-1000,'Order'] = 'SELL'
+        orders.loc[orders['Shares']==1000,'Order'] = 'BUY'
+        orders.loc[orders['Shares']==-1000,'Shares'] = 1000
+        orders.loc[orders['Shares']==1000,'Shares'] = 1000
+        orders['Symbol'] = symbol[0]
+        orders.index = range(len(orders))
+        
+        market = compute_portvals(orders ,start_val=100000,commission=0,impact=0.0)
+        assess_portfolio(portfolio=market, sd = sd , ed = ed ,syms=symbol,gen_plot=True,allocs=[1],sv=1000000)
+        return orders
+
+    
+ms        = ManualStrategy()
+df_trades = ms.testPolicy(symbol= ['JPM'], sd = dt.datetime(2008,1,1),ed = dt.datetime(2009,12,31),sv=100000)
+
+#tos        = TheoreticallyOptimalStrategy()
+#df_trades = tos.testPolicy(symbol= ['JPM'], sd = dt.datetime(2008,1,1),ed = dt.datetime(2009,12,31),sv=100000)
+
+
+#assess_portfolio(sd = dt.datetime(2008,1,1),ed = dt.datetime(2011,12,31),gen_plot=True,syms=['JPM'],allocs=[1],sv=10000)
+
+
+
+
+
+
+
+

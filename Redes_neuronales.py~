@@ -1,0 +1,154 @@
+# TensorFlow and tf.keras
+import tensorflow as tf
+from tensorflow import keras
+from indicators_bitcoin import indicators
+from sklearn.model_selection import train_test_split
+
+#%%
+# Helper libraries
+
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+print(tf.__version__)
+
+#%%
+
+btc = pd.read_csv("coinbaseUSD_1-min_data_2014-12-01_to_2018-06-27.csv")
+
+btc[btc.columns.values] = btc[btc.columns.values].ffill()
+
+
+
+#%%
+btc['TR'] =  0 
+
+a = btc['High']-btc['Low']
+b = btc['Low']-btc['Close'].shift(-1)
+c = btc['High']-btc['Close'].shift(-1)
+
+btc['TR'] = pd.concat([a,b,c],axis=1).max(axis=1)
+btc['ATR'] = btc['TR'].ewm(span = 10).mean()
+
+btc['Delta'] = btc['Close'] - btc['Open']
+
+btc['to_predict'] = btc['Delta'].apply(lambda x : 1 if(x>0) else 0)
+
+btc.index = pd.to_datetime(btc['Timestamp'],infer_datetime_format =True,unit='s')
+
+
+
+
+#%%
+
+sd = btc.index[0]
+ed = btc.index[-1]
+
+
+btc.tail()
+
+(normalized_values ,bbp,moving_avarage,rsi_val,momentum,sma_cross) = indicators(data=btc)
+
+
+#%%
+
+
+normalized_values.plot()
+bbp.plot()
+
+#%%
+
+datos = pd.concat([normalized_values ,bbp,moving_avarage,rsi_val,momentum,sma_cross,btc ],axis=1)
+
+btc_mat = datos.as_matrix()
+
+
+#%%
+
+
+def rolling_window(a, window= 22):
+    """
+        Takes np.array 'a' and size 'window' as parameters
+        Outputs an np.array with all the ordered sequences of values of 'a' of size 'window'
+        e.g. Input: ( np.array([1, 2, 3, 4, 5, 6]), 4 )
+             Output: 
+                     array([[1, 2, 3, 4],
+                           [2, 3, 4, 5],
+                           [3, 4, 5, 6]])
+    """
+    shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
+    strides = a.strides + (a.strides[-1],)
+    return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+
+ 
+#%%
+    
+WINDOW_SIZE = 22
+X = rolling_window(btc_mat[:,-3], WINDOW_SIZE)[:-1,:]
+Y = btc['to_predict'].as_matrix()[WINDOW_SIZE:]
+
+
+
+X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.25, stratify=Y)
+
+
+print(X.shape)
+
+
+#%%
+
+
+model = keras.Sequential([
+    #keras.layers.Flatten(input_shape=(28, 28)),         #Convierte las imagenes de 28x28 a una entrada de 784 
+    keras.layers.Dense(22, activation=tf.nn.relu),     # 128 nodes , conectados , la activacion es con RELU
+    keras.layers.Dense(110,activation=tf.nn.relu),
+    keras.layers.Dense(110,activation=tf.nn.relu),
+    keras.layers.Dense(2, activation=tf.nn.softmax)    # Para la salida , la clasificaicon
+])
+    
+    
+
+    
+#%%
+    
+model.compile(optimizer=tf.train.AdamOptimizer(), 
+              #loss = 'mse',
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy'])
+
+
+#%%
+
+
+model.fit(X_train, y_train, epochs=5)
+
+
+
+#%%
+
+
+test_loss, test_acc = model.evaluate(X_test, y_test)
+
+print('Test accuracy:', test_acc)
+
+
+
+
+#%%
+
+
+predictions = model.predict(X_test)
+
+a = pd.DataFrame(data=predictions[:,0])
+
+b = pd.DataFrame(data=predictions[:,1])
+
+
+
+
+#%%
+predictions_df  = pd.DataFrame(data=predictions)
+y_df = pd.DataFrame(data=y_test)
+pd.concat([predictions_df,y_df],axis=1)
